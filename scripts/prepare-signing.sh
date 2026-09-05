@@ -19,6 +19,14 @@ keychain_password="$(openssl rand -hex 32)"
 security create-keychain -p "$keychain_password" "$keychain"
 security set-keychain-settings -lut 3600 "$keychain"
 security unlock-keychain -p "$keychain_password" "$keychain"
+# codesign also uses the user search list to resolve private keys, even with
+# --keychain. Preserve the runner's existing keychains while adding this one.
+python3 - "$keychain" <<'PYCODE'
+import shlex, subprocess, sys
+existing = shlex.split(subprocess.check_output(['security', 'list-keychains', '-d', 'user'], text=True))
+subprocess.run(['security', 'list-keychains', '-d', 'user', '-s', sys.argv[1],
+                *[path for path in existing if path != sys.argv[1]]], check=True)
+PYCODE
 security import "$p12" -k "$keychain" -P "$HOST_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
 xcrun notarytool store-credentials kagero-host-notary --key "$notary_key" \
