@@ -6,6 +6,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument('--arch', choices=['arm64', 'amd64'], default='arm64' if platform.machine() == 'arm64' else 'amd64')
+parser.add_argument('--signed', action='store_true', help='Require Developer ID signing and Apple notarization')
 options = parser.parse_args()
 version = json.loads((root / 'packaging/npm/package.json').read_text())['version']
 if not re.fullmatch(r'\d+\.\d+\.\d+', version):
@@ -39,6 +40,8 @@ subprocess.run(['go', 'build', '-trimpath', '-tags', tags, '-ldflags=-s -w', '-o
 build_info = subprocess.check_output(['xcrun', 'vtool', '-show-build', str(binary)], text=True)
 if not re.search(r'^\s*minos 13\.0\s*$', build_info, re.MULTILINE):
     raise RuntimeError('The built executable must target macOS 13.0; refusing to package it.')
+if options.signed:
+    subprocess.run(['python3', str(root/'scripts/sign-release.py'), str(binary)], check=True)
 package = dist / 'npm'
 package.mkdir(exist_ok=True)
 for filename in ('package.json', 'cli.cjs'):

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/xml"
@@ -68,15 +69,23 @@ func setup(dir string) error {
 		return err
 	}
 	target := filepath.Join(bin, "kagero-host")
+	// Repeated setup only needs a fresh invitation when the installed executable
+	// is unchanged and its daemon is healthy. Do not reopen Keychain or drop SSH.
+	source, err := os.ReadFile(executable)
+	if err != nil {
+		return err
+	}
+	if installed, readErr := os.ReadFile(target); readErr == nil && bytes.Equal(source, installed) {
+		var status map[string]any
+		if host.Control(dir, "GET", "/status", nil, &status) == nil {
+			return nil
+		}
+	}
 	if err := stop(dir); err != nil {
 		return err
 	}
 	if executable != target {
-		data, err := os.ReadFile(executable)
-		if err != nil {
-			return err
-		}
-		if err := host.AtomicWrite(target, data, 0700); err != nil {
+		if err := host.AtomicWrite(target, source, 0700); err != nil {
 			return err
 		}
 	}
@@ -85,6 +94,7 @@ func setup(dir string) error {
 	}
 	// Initialize using the final executable path, in the foreground. A local,
 	// unsigned upgrade may require Keychain consent; do not hide that in a daemon.
+	fmt.Fprintln(os.Stderr, "正在准备电脑身份。如 macOS 请求钥匙串权限，请输入 Mac 登录密码并选择「始终允许」，避免下次启动重复询问。")
 	prepareCtx, cancelPrepare := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancelPrepare()
 	prepare := exec.CommandContext(prepareCtx, target, "--state-dir", dir, "prepare")

@@ -29,6 +29,8 @@ kagero-host setup
 
 `setup` 自动安装当前用户的 LaunchAgent，启动后台服务，并在终端与图片预览中显示二维码。初始化会在前台准备 macOS 钥匙串身份；首次访问或本地未正式签名的程序升级时可能需要允许访问。自动化验收应在 macOS GUI 登录会话运行初始化，SSH/headless 会话可能无法新增钥匙串记录。关闭终端后服务继续运行，下次登录自动启动。电脑休眠、断网或用户退出登录期间不可保证连接。
 
+钥匙串弹窗要求的是 Mac 登录钥匙串密码。输入后选择「始终允许」以记住对当前程序的授权；「允许」仅授权本次访问。程序升级或钥匙串锁定时仍可能需要重新授权。重复执行 `setup` 时，如果后台程序与当前版本完全一致且服务正常，会直接生成新的配对码，不重启服务、不重新读取身份密钥；日常新增手机也可直接执行 `kagero-host pair`。
+
 再次显示二维码：`kagero-host pair`。二维码 5 分钟有效，每次生成都会替换上一张，只配对一台设备；同一设备可以重试丢失的配对响应。
 
 0.1.1 起二维码图片按整数像素生成，通常不超过 480 px。大二维码默认使用图片预览，避免刷满或超出终端；只有窗口放得下的小二维码才自动打印。需要终端码时运行 `kagero-host --terminal-qr pair`，仍会检查窗口空间，防止换行破坏二维码。`--no-open` 保留为不打开图片预览的选项。
@@ -76,3 +78,26 @@ npm install --prefix /private/tmp/kagero-host-install ./dist/kagero-host-0.1.0.t
 ## 开源许可
 
 Kagero Host 自有封装代码为 MIT；Tailcat 为 BSD-3-Clause。打包时按目标实际依赖收集 Go 标准库、Tailcat、SSH/SFTP、QR 和其他依赖的版权、LICENSE、NOTICE；随 npm 包、brew 压缩包以及可执行文件 `licenses` 一起提供。以 `go.mod` / `go.sum` 固定版本，升级后重新生成声明。
+
+### Developer ID 签名与公证自动化
+
+公开仓库的 `v*` 发布流程要求每个架构在打包前完成 Developer ID Application 签名和 Apple 公证；缺少凭据、签名错误、公证拒绝或等待超时都会阻止发布，不降级为未签名发布。私有主仓库仍由 `host-v*` 同步 Host 源码并触发公开仓库发布。
+
+在 **dannisun0412/kagero-host** 的 Actions Secrets 中配置：
+
+- `HOST_P12_BASE64`：包含 Developer ID Application 证书及私钥的加密 P12，Base64 编码。
+- `HOST_P12_PASSWORD`：上述 P12 的密码。
+- `HOST_SIGNING_IDENTITY`：该签名证书的 SHA-1 标识（`security find-identity -v -p codesigning`）。
+- `HOST_NOTARY_KEY_BASE64`：公证用 App Store Connect 团队 API 私钥 P8 的 Base64 编码。
+- `HOST_NOTARY_KEY_ID`、`HOST_NOTARY_ISSUER_ID`：该 API 密钥的 Key ID、Issuer ID。
+
+构建任务创建临时钥匙串、验证公证凭据，结束时清理。密钥不放入源码、日志或构建产物。公证使用 `notarytool`，签名启用 hardened runtime、可信时间戳和固定标识 `app.kagero.host`。独立命令行 Mach-O 无法 stapling；Apple 保存对应签名的公证票据，brew/npm 包必须保留已公证二进制的原始字节。
+
+本地签名验收可先将公证凭据存入 Keychain 的专用 profile，再运行：
+
+```sh
+HOST_SIGNING_IDENTITY='<证书 SHA-1>' HOST_NOTARY_PROFILE='kagero-host-notary' \
+  python3 scripts/package.py --signed --arch arm64
+```
+
+不带 `--signed` 仅用于本地开发打包，不代表可公开分发的已签名、公证版本。已有 0.1.3 发布物仍未签名；必须在凭据配置完成后发布新版本并实际验收，不能仅依据脚本或证书创建成功宣称发布完成。
