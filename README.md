@@ -30,6 +30,8 @@ kagero-host setup
 
 再次显示二维码：`kagero-host pair`。二维码 5 分钟有效，每次生成都会替换上一张，只配对一台设备；同一设备可以重试丢失的配对响应。
 
+0.1.1 起二维码图片按整数像素生成，通常不超过 480 px。大二维码默认使用图片预览，避免刷满或超出终端；只有窗口放得下的小二维码才自动打印。需要终端码时运行 `kagero-host --terminal-qr pair`，仍会检查窗口空间，防止换行破坏二维码。`--no-open` 保留为不打开图片预览的选项。
+
 ```sh
 kagero-host status
 kagero-host devices
@@ -50,6 +52,8 @@ Homebrew 发布准备使用 `python3 scripts/prepare-brew.py --repository OWNER/
 通过 Homebrew 升级后，再执行 `kagero-host setup` 更新正在使用的后台程序；仅 `brew upgrade` 不会替换已经复制到私有目录的服务程序。升级保留电脑身份和手机授权记录。
 
 `package.py --arch amd64` 可构建 Intel Mac；默认当前架构。依次构建两个架构时 npm 包会包含两种可执行文件。首版只支持 macOS；不在 Linux 上使用文件代替钥匙串静默降级。
+
+源码镜像由 Kagero 主项目维护。普通源码推送不会发布；推送与 Go/manifest 版本一致的 `vMAJOR.MINOR.PATCH` tag 后，GitHub Actions 在两种 Mac 架构上测试、构建，发布测试版并更新 Homebrew。维护者需要为本仓库配置仅能写入 `homebrew-tap` 的 `TAP_DEPLOY_KEY` secret。已发布版本不覆盖，发布说明来自 `RELEASE.md`。
 
 ## 隔离安装验收
 

@@ -13,6 +13,7 @@ import (
 
 	"app.kagero/host/internal/host"
 	"github.com/skip2/go-qrcode"
+	"golang.org/x/term"
 )
 
 func main() {
@@ -30,6 +31,7 @@ func run() error {
 	dir := flags.String("state-dir", filepath.Join(base, "KageroHost"), "独立配置目录（密钥仍保存在钥匙串）")
 	jsonOutput := flags.Bool("json", false, "输出 JSON，pair 的输出包含一次性配对凭据")
 	noOpen := flags.Bool("no-open", false, "不打开二维码预览")
+	terminalQR := flags.Bool("terminal-qr", false, "在终端显示完整二维码（需要足够窗口空间）")
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		return err
 	}
@@ -59,9 +61,9 @@ func run() error {
 		if err := setup(*dir); err != nil {
 			return err
 		}
-		return pair(*dir, *jsonOutput, *noOpen)
+		return pair(*dir, *jsonOutput, *noOpen, *terminalQR)
 	case "pair":
-		return pair(*dir, *jsonOutput, *noOpen)
+		return pair(*dir, *jsonOutput, *noOpen, *terminalQR)
 	case "status":
 		var value map[string]any
 		if err := host.Control(*dir, "GET", "/status", nil, &value); err != nil {
@@ -109,7 +111,7 @@ func run() error {
 	}
 }
 func printJSON(value any) error { return json.NewEncoder(os.Stdout).Encode(value) }
-func pair(dir string, jsonOutput, noOpen bool) error {
+func pair(dir string, jsonOutput, noOpen, terminalQR bool) error {
 	var invitation host.Invitation
 	if err := host.Control(dir, "POST", "/pair", nil, &invitation); err != nil {
 		return err
@@ -118,7 +120,7 @@ func pair(dir string, jsonOutput, noOpen bool) error {
 	if err != nil {
 		return err
 	}
-	png, err := code.PNG(720)
+	png, err := code.PNG(qrImageSize(code))
 	if err != nil {
 		return err
 	}
@@ -130,7 +132,12 @@ func pair(dir string, jsonOutput, noOpen bool) error {
 		return printJSON(map[string]any{"url": invitation.URL(), "png": path, "expiresAt": invitation.ExpiresAt})
 	}
 	fmt.Println("\nKagero Host · 扫码连接这台电脑\n基于 Tailcat 开源项目 · BSD-3-Clause")
-	fmt.Print(code.ToSmallString(false))
+	columns, rows, sizeErr := term.GetSize(int(os.Stdout.Fd()))
+	if sizeErr == nil && qrFitsTerminal(code, columns, rows, terminalQR) {
+		fmt.Print(code.ToSmallString(false))
+	} else {
+		fmt.Println("二维码已生成，使用图片预览扫码，避免终端换行或显示不全。")
+	}
 	fmt.Println("打开 Kagero → 添加服务器 → 扫码连接。二维码 5 分钟内有效，仅可配对一台设备。")
 	fmt.Println("服务已在后台运行，关闭此终端不会断开；登录电脑后自动启动。")
 	fmt.Println("再次配对：kagero-host pair    管理设备：kagero-host devices")
@@ -141,4 +148,20 @@ func pair(dir string, jsonOutput, noOpen bool) error {
 		}
 	}
 	return nil
+}
+
+// Keep whole pixels per QR module: scaling to an arbitrary size blurs edges.
+func qrImageSize(code *qrcode.QRCode) int {
+	modules := len(code.Bitmap())
+	scale := 480 / modules
+	if scale < 2 {
+		scale = 2
+	}
+	return modules * scale
+}
+
+func qrFitsTerminal(code *qrcode.QRCode, columns, rows int, allowLarge bool) bool {
+	modules := len(code.Bitmap())
+	lines := (modules + 1) / 2
+	return columns >= modules+2 && rows >= lines+10 && (allowLarge || lines <= 32)
 }

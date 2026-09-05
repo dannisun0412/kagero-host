@@ -7,7 +7,11 @@ root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument('--arch', choices=['arm64', 'amd64'], default='arm64' if platform.machine() == 'arm64' else 'amd64')
 options = parser.parse_args()
-version = '0.1.0'
+version = json.loads((root / 'packaging/npm/package.json').read_text())['version']
+if not re.fullmatch(r'\d+\.\d+\.\d+', version):
+    raise RuntimeError('Use a numeric MAJOR.MINOR.PATCH version.')
+if f'const Version = "{version}"' not in (root / 'internal/host/state.go').read_text():
+    raise RuntimeError('Go and package.json versions must match before packaging.')
 dist = root / 'dist'
 dist.mkdir(exist_ok=True)
 env = dict(os.environ, GOOS='darwin', GOARCH=options.arch, CGO_ENABLED='1',
