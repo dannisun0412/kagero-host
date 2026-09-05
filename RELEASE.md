@@ -1,5 +1,7 @@
 The pairing QR preview now uses a compact image with whole pixels per module. Large QR codes no longer fill or wrap the terminal; `--terminal-qr` displays the full terminal code when the window has enough space. The pairing protocol remains compatible with the existing Kagero App.
 
+This version also verifies the tag-based release pipeline. The initial `v0.1.1` source tag is retained without release assets; `v0.1.2` supersedes that publishing attempt.
+
 ```sh
 brew install dannisun0412/tap/kagero-host
 # Existing installation:
