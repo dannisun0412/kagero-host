@@ -74,6 +74,7 @@ npm install --prefix /private/tmp/kagero-host-install ./dist/kagero-host-0.1.0.t
 - `kagero-pair` 账号只能提交版本化的配对请求，不允许 shell、PTY 命令执行或 SFTP。配对成功后只接受登记过的 Ed25519 公钥，访问权限等于运行服务的当前 macOS 用户。
 - 主机私钥保存在 macOS Keychain。`state.json` 只存电脑名称与公钥等元数据。二维码含临时凭据，生成到私有配置目录，不写入后台日志。
 - 公共 DERP 服务目前免费且限速。代码许可证不保证公共中继的无限容量或可用性。
+- Host 链接 Tailscale 的 NAT-PMP／PCP／UPnP 端口映射模块，在路由器允许时自动申请加密 UDP 隧道的映射，由底层维护映射生命周期。动态公网 IP 不需要写入配对二维码；不支持映射或 UDP 被代理/防火墙拦截时仍可能使用 DERP。不会为系统 SSH 的 TCP 22 端口创建映射。此能力已做发布编译参数检查，尚未在用户家庭路由器实测。
 
 ## 开源许可
 

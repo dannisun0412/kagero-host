@@ -13,7 +13,18 @@ import (
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
+	"tailscale.com/feature/buildfeatures"
+	"tailscale.com/net/portmapper/portmappertype"
 )
+
+func TestHostPortMappingAvailable(t *testing.T) {
+	if !buildfeatures.HasPortMapper {
+		t.Fatal("Host build disabled router port mapping")
+	}
+	if _, ok := portmappertype.HookNewPortMapper.GetOk(); !ok {
+		t.Fatal("Host did not register router port mapping")
+	}
+}
 
 func TestRealSSHEnrollmentIsolationAndRevocation(t *testing.T) {
 	p, invitation, request, signer := testPairing(t)

@@ -1,6 +1,6 @@
 {
   "name": "kagero-host",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Kagero desktop companion with QR pairing, powered by Tailcat",
   "license": "MIT",
   "os": ["darwin"],

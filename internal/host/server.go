@@ -21,6 +21,8 @@ import (
 	ssh "github.com/tailscale/gliderssh"
 	"github.com/tailscale/tailcat"
 	gossh "golang.org/x/crypto/ssh"
+	// Register the mapper hook; magicsock alone only links its interface.
+	_ "tailscale.com/feature/portmapper"
 	"tailscale.com/wgengine/filter"
 )
 
