@@ -4,7 +4,7 @@ Kagero 的 macOS 电脑端伴侣：安装、生成二维码，在 App「添加�
 
 ## Homebrew 安装
 
-已发布 [0.1.0 测试版](https://github.com/dannisun0412/kagero-host/releases/tag/v0.1.0)，安装源为 [dannisun0412/homebrew-tap](https://github.com/dannisun0412/homebrew-tap)。在终端运行：
+公开安装包见 [GitHub 测试版本](https://github.com/dannisun0412/kagero-host/releases)，安装源为 [dannisun0412/homebrew-tap](https://github.com/dannisun0412/homebrew-tap)。在终端运行：
 
 ```sh
 brew install dannisun0412/tap/kagero-host
@@ -13,7 +13,7 @@ kagero-host setup
 
 需要 macOS 13 Ventura 或更新版本，以及支持扫码配对的 Kagero App。首次运行请在电脑已登录的桌面终端中执行。安装不会自行启动远程访问；执行 `setup` 后启动后台服务并显示二维码，之后登录电脑时自动启动。
 
-0.1.0 为首个测试版本，提供 Apple Silicon 和 Intel 构建，暂未进行 Developer ID 签名和 Apple 公证。Apple Silicon 已完成本地安装与 App 模拟器扫码配对验收；Intel 和较旧 macOS 的完整配对仍需对应设备验证。
+当前为测试版本，提供 Apple Silicon 和 Intel 构建，暂未进行 Developer ID 签名和 Apple 公证。Apple Silicon 已完成本地安装与 App 模拟器扫码配对验收；自动发布在两种架构的原生 runner 上运行 Go race tests 和可执行文件版本检查。Intel 和较旧 macOS 的完整 App 配对仍需对应设备验证。
 
 ## 本地构建与安装
 
@@ -22,7 +22,8 @@ kagero-host setup
 ```sh
 cd kagero-host
 python3 scripts/package.py
-npm install -g ./dist/kagero-host-0.1.0.tgz
+KAGERO_HOST_VERSION="$(node -p 'require("./packaging/npm/package.json").version')"
+npm install -g "./dist/kagero-host-${KAGERO_HOST_VERSION}.tgz"
 kagero-host setup
 ```
 
