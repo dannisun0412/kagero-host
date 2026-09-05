@@ -69,12 +69,37 @@ npm install --prefix /private/tmp/kagero-host-install ./dist/kagero-host-0.1.0.t
 
 ## 协议和权限
 
-- 连接使用固定版本 Tailcat 的用户态 WireGuard 通道；仅提供内部 2222 端口，不监听公网 TCP 端口。
+- 同时提供 Tailcat 用户态 WireGuard 内部 2222 端口及独立 SSH TCP 2223 入口（默认监听本机网络接口，可关闭）。不修改系统 SSH、路由器端口映射或防火墙；公网入站需用户配置。两个入口复用同一主机密钥、配对授权、撤销和连接上限。
 - QR 中携带短期配对令牌、Tailcat 地址、电脑 ID 和 SSH 公钥。App 确认电脑后，将主机密钥固定为二维码中的值；不接受网络返回的其他密钥。
 - `kagero-pair` 账号只能提交版本化的配对请求，不允许 shell、PTY 命令执行或 SFTP。配对成功后只接受登记过的 Ed25519 公钥，访问权限等于运行服务的当前 macOS 用户。
 - 主机私钥保存在 macOS Keychain。`state.json` 只存电脑名称与公钥等元数据。二维码含临时凭据，生成到私有配置目录，不写入后台日志。
 - 公共 DERP 服务目前免费且限速。代码许可证不保证公共中继的无限容量或可用性。
 - Host 链接 Tailscale 的 NAT-PMP／PCP／UPnP 端口映射模块，在路由器允许时自动申请加密 UDP 隧道的映射，由底层维护映射生命周期。动态公网 IP 不需要写入配对二维码；不支持映射或 UDP 被代理/防火墙拦截时仍可能使用 DERP。不会为系统 SSH 的 TCP 22 端口创建映射。此能力已做发布编译参数检查，尚未在用户家庭路由器实测。
+
+## 多路径连接（源码实现，待发版）
+
+扫码仍是一次性授权。新二维码包含当前直连候选；没有可用 Tailcat 地址时生成 version 2 直连二维码，需要对应新版 App。旧 Host / version 1 二维码仍被新版 App 接受。独立 TCP 入口允许局域网及已放行的公网 IPv4/IPv6，不要求手机建立系统 VPN。
+
+```sh
+# 查看监听状态；不输出 Tailcat 连接凭据
+kagero-host direct
+
+# 本地监听 TCP 2223；公网域名及外部端口（外部端口可与内部不同）
+kagero-host direct --port 2223 --endpoint home.example.com:2223
+
+# 关闭新的 TCP 直连；已有连接和远端 tmux 会话保留
+kagero-host direct --disable
+```
+
+`direct` 带参数时替换并保存整份直连配置：本地端口默认 2223，公网入口可重复 `--endpoint` 最多两次，不提供时清空此前公网入口。配置存入 `network.json`，不包含密钥，立即生效；监听失败保留此前有效配置。默认自动发布一条物理网卡 IPv4 和一条全局 IPv6 提示，不发布 utun/VPN 地址。多网卡电脑可手动指定合适入口。
+
+域名由路由器或现有 DDNS 客户端维护 A/AAAA。Host 本版本不持有 DNS API token，不自动更新第三方 DNS，也不会自动开启路由器 TCP 端口。公网 IPv4 需将外部 TCP 端口映射到电脑的 TCP 2223；IPv6 需放行到电脑的对应端口。只使用 A 记录或只使用 AAAA 记录均可，客户端由 SwiftNIO 处理地址族连接。电脑应保持唤醒和网络在线。
+
+Host 的中继发现与直连/本机控制接口分开启动；中继发现失败可继续直连，`status` 会显示 relayError。本次进程启动时中继初始化失败后不无限重试，排除网络问题后需重新启动 Host。SSH 密钥仍相同，不需要为直连重新授权设备。
+
+旧手机配对记录在成功连接新版 Host 后通过已认证 SSH 学习新入口。如果旧 Tailcat 路径完全不可达，可在 App「已配对电脑 → 高级设置 → 直连入口」填写域名与端口，或重新扫码。地址变化不会改变电脑身份，所有入口均验证原 SSH 公钥。不能把未验证的 DNS/二维码地址当作主机身份。
+
+验证：`go test -race ./internal/host ./cmd/kagero-host`。本地测试使用临时身份和 loopback 服务，不操作用户 Host、路由器或真实 tmux 会话。公网/VPN 延迟与手机画面需要两端更新后实测。
 
 ## 开源许可
 
@@ -102,3 +127,13 @@ HOST_SIGNING_IDENTITY='<证书 SHA-1>' HOST_NOTARY_PROFILE='kagero-host-notary' 
 ```
 
 不带 `--signed` 仅用于本地开发打包，不代表可公开分发的已签名、公证版本。已有 0.1.3 发布物仍未签名；必须在凭据配置完成后发布新版本并实际验收，不能仅依据脚本或证书创建成功宣称发布完成。
+
+## iCloud 同账号发现（开发中）
+
+原生 `apple/` Mac 菜单栏组件与 iOS 共享 CloudHostKit，使用 CloudKit private database 交换设备描述和手机公钥绑定的短期配对授权。终端仍走已验证主机身份的 SSH，iCloud 不转发终端数据。没有 iCloud 或账号不同的设备继续扫码。
+
+包含组件的签名版本运行 `kagero-host icloud` 后启用共享；需要先运行 `setup`。组件仅支持默认配置目录、macOS 13+，旧安装包会提示升级。私钥不上传，账号改变后必须重新启用；关闭共享不撤销既有 SSH 配对。
+
+开发编译 `swift test --package-path apple`、`python3 scripts/build-cloud.py --arch arm64`。默认仅生成 ad-hoc 编译包，不能用于真实 iCloud。正式打包增加 `--with-icloud`，需要匹配 `app.kagero.host.cloud` 的 Developer ID 描述文件（`HOST_CLOUD_PROFILE`）、容器 `iCloud.com.kageroai.terminalai`、CloudKit/Push 权限与 Production schema。CI 增加 `HOST_CLOUD_PROFILE_BASE64` Secret 和 `HOST_ICLOUD_ENABLED=true` 变量后才携带组件；此变量应在签名同步验收后启用。
+
+当前完成本地构建和协议测试；尚未进行实际 iCloud 两端同步、登录项、界面及公网验收。不承诺所有网络都能直连，也不承诺 iOS 后台永久保持 SSH。

@@ -39,7 +39,7 @@ def main():
             authentication += ['--keychain', keychain]
         reply = subprocess.check_output([
             'xcrun', 'notarytool', 'submit', archive, *authentication,
-            '--wait', '--timeout', '20m', '--output-format', 'json'], text=True)
+            '--wait', '--timeout', '60m', '--output-format', 'json'], text=True)
         result = json.loads(reply)
         if result.get('status') != 'Accepted':
             raise RuntimeError(f"Apple notarization not accepted: {result.get('id')} {result.get('status')}")

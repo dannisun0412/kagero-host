@@ -16,14 +16,15 @@ import (
 )
 
 type Invitation struct {
-	Version   int    `json:"version"`
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Address   string `json:"address"`
-	Port      int    `json:"port"`
-	HostKey   string `json:"hostKey"`
-	Token     string `json:"token"`
-	ExpiresAt int64  `json:"expiresAt"`
+	Version   int        `json:"version"`
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Address   string     `json:"address"`
+	Port      int        `json:"port"`
+	HostKey   string     `json:"hostKey"`
+	Token     string     `json:"token"`
+	ExpiresAt int64      `json:"expiresAt"`
+	Endpoints []Endpoint `json:"endpoints,omitempty"`
 }
 
 func (i Invitation) URL() string {
@@ -38,12 +39,13 @@ type PairRequest struct {
 	NodeKey   string `json:"nodeKey"`
 }
 type PairReply struct {
-	Version  int    `json:"version"`
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Username string `json:"username"`
-	DeviceID string `json:"deviceID"`
-	Error    string `json:"error,omitempty"`
+	Version   int        `json:"version"`
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Username  string     `json:"username"`
+	DeviceID  string     `json:"deviceID"`
+	Error     string     `json:"error,omitempty"`
+	Endpoints []Endpoint `json:"endpoints,omitempty"`
 }
 type Pairing struct {
 	mu          sync.Mutex
@@ -52,6 +54,8 @@ type Pairing struct {
 	reply       PairReply
 	store       *Store
 	now         func() time.Time
+	// iCloud enrollment is bound to the requesting phone's SSH public key.
+	expectedKey string
 }
 
 func (p *Pairing) New(address, hostKey string) (Invitation, error) {
@@ -92,6 +96,9 @@ func (p *Pairing) Complete(token string, req PairRequest, username string) (Pair
 		return PairReply{}, errors.New("设备网络身份无效")
 	}
 	id := deviceID(pub)
+	if p.expectedKey != "" && p.expectedKey != id {
+		return PairReply{}, errors.New("此配对授权属于另一台设备")
+	}
 	if p.consumedKey != "" {
 		if id == p.consumedKey {
 			return p.reply, nil

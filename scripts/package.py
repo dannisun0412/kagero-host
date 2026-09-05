@@ -7,6 +7,7 @@ root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument('--arch', choices=['arm64', 'amd64'], default='arm64' if platform.machine() == 'arm64' else 'amd64')
 parser.add_argument('--signed', action='store_true', help='Require Developer ID signing and Apple notarization')
+parser.add_argument('--with-icloud', action='store_true', help='Include provisioned native iCloud companion')
 options = parser.parse_args()
 version = json.loads((root / 'packaging/npm/package.json').read_text())['version']
 if not re.fullmatch(r'\d+\.\d+\.\d+', version):
@@ -42,18 +43,26 @@ if not re.search(r'^\s*minos 13\.0\s*$', build_info, re.MULTILINE):
     raise RuntimeError('The built executable must target macOS 13.0; refusing to package it.')
 if options.signed:
     subprocess.run(['python3', str(root/'scripts/sign-release.py'), str(binary)], check=True)
+cloud_app = None
+if options.with_icloud:
+    subprocess.run(['python3', str(root/'scripts/build-cloud.py'), '--arch', options.arch] + (['--signed'] if options.signed else []), check=True)
+    cloud_app = dist/('cloud-'+options.arch)/'KageroCloud.app'
 package = dist / 'npm'
 package.mkdir(exist_ok=True)
 for filename in ('package.json', 'cli.cjs'):
     shutil.copy(root/'packaging/npm'/filename, package/filename)
 (package/'bin').mkdir(exist_ok=True)
 shutil.copy2(binary, package/'bin'/binary.name)
+old_cloud = package/'bin/KageroCloud.app'
+if old_cloud.exists(): shutil.rmtree(old_cloud)
+if cloud_app: shutil.copytree(cloud_app, old_cloud)
 (package/'THIRD-PARTY-NOTICES.txt').write_text(notice)
 for filename in ('README.md', 'LICENSE'): shutil.copy(root/filename, package/filename)
 subprocess.run(['npm', 'pack', '--pack-destination', str(dist)], cwd=package, check=True)
 archive = dist / f'kagero-host-{version}-darwin-{options.arch}.tar.gz'
 with tarfile.open(archive, 'w:gz') as tar:
     tar.add(binary, arcname='kagero-host')
+    if cloud_app: tar.add(cloud_app, arcname='KageroCloud.app')
     tar.add(root/'LICENSE', arcname='LICENSE')
     tar.add(package/'THIRD-PARTY-NOTICES.txt', arcname='THIRD-PARTY-NOTICES.txt')
 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
@@ -70,6 +79,7 @@ formula = f'''class KageroHost < Formula
   end
   def install
     bin.install "kagero-host"
+    libexec.install "KageroCloud.app" if File.directory?("KageroCloud.app")
     doc.install "LICENSE", "THIRD-PARTY-NOTICES.txt"
   end
   def caveats

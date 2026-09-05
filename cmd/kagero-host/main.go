@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -64,6 +65,38 @@ func run() error {
 		return pair(*dir, *jsonOutput, *noOpen, *terminalQR)
 	case "pair":
 		return pair(*dir, *jsonOutput, *noOpen, *terminalQR)
+	case "direct":
+		return configureDirect(*dir, flags.Args()[1:])
+	case "icloud-host":
+		var value map[string]any
+		if err := host.Control(*dir, "GET", "/icloud/host", nil, &value); err != nil {
+			return err
+		}
+		return printJSON(value)
+	case "icloud":
+		if *dir != filepath.Join(base, "KageroHost") {
+			return fmt.Errorf("iCloud 组件仅支持默认配置目录")
+		}
+		return openCloud()
+	case "icloud-clear":
+		var value map[string]bool
+		if err := host.Control(*dir, "POST", "/icloud/clear", nil, &value); err != nil {
+			return err
+		}
+		return printJSON(value)
+	case "icloud-invite":
+		// Called by the signed companion through pipes. Never write this to logs.
+		var req host.CloudInviteRequest
+		d := json.NewDecoder(io.LimitReader(os.Stdin, 2049))
+		d.DisallowUnknownFields()
+		if d.Decode(&req) != nil || d.Decode(new(any)) != io.EOF {
+			return fmt.Errorf("iCloud 请求无效")
+		}
+		var value map[string]string
+		if err := host.Control(*dir, "POST", "/icloud/invitation", req, &value); err != nil {
+			return err
+		}
+		return printJSON(value)
 	case "status":
 		var value map[string]any
 		if err := host.Control(*dir, "GET", "/status", nil, &value); err != nil {
@@ -107,7 +140,7 @@ func run() error {
 		fmt.Println("已移除自动启动。配对记录和钥匙串身份已保留。")
 		return nil
 	default:
-		return fmt.Errorf("支持：setup、pair、status、devices、revoke、stop、uninstall、version、licenses")
+		return fmt.Errorf("支持：setup、pair、icloud、direct、status、devices、revoke、stop、uninstall、version、licenses")
 	}
 }
 func printJSON(value any) error { return json.NewEncoder(os.Stdout).Encode(value) }
@@ -164,4 +197,40 @@ func qrFitsTerminal(code *qrcode.QRCode, columns, rows int, allowLarge bool) boo
 	modules := len(code.Bitmap())
 	lines := (modules + 1) / 2
 	return columns >= modules+2 && rows >= lines+10 && (allowLarge || lines <= 32)
+}
+
+// Global flags precede the command; direct has its own options.
+func configureDirect(dir string, args []string) error {
+	if len(args) == 0 {
+		var value map[string]any
+		if err := host.Control(dir, "GET", "/direct", nil, &value); err != nil {
+			return err
+		}
+		return printJSON(value)
+	}
+	flags := flag.NewFlagSet("direct", flag.ContinueOnError)
+	port := flags.Int("port", host.DirectPort, "Host 本地 TCP 监听端口")
+	disabled := flags.Bool("disable", false, "关闭新直连入口，保留已有会话")
+	var endpoints []host.Endpoint
+	flags.Func("endpoint", "公网 DDNS 域名:端口，可重复两次；不会自动配置路由器或 DNS", func(value string) error {
+		e, err := host.ParseEndpoint(value)
+		if err != nil {
+			return err
+		}
+		endpoints = append(endpoints, e)
+		return nil
+	})
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("用法：kagero-host direct --port 2223 --endpoint home.example.com:2223")
+	}
+	var value map[string]any
+	if err := host.Control(dir, "POST", "/direct", host.DirectConfig{Disabled: *disabled, Port: *port, Public: endpoints}, &value); err != nil {
+		return err
+	}
+	fmt.Println("直连配置已保存并生效。公网 IPv4 需路由器 TCP 端口映射，IPv6 需防火墙放行；域名由现有 DDNS 更新。")
+	fmt.Println("新手机运行 kagero-host pair 扫码；已配对手机重新连接后会更新入口，也可在 App 高级设置填写域名。")
+	return printJSON(value)
 }

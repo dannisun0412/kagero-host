@@ -29,15 +29,19 @@ import (
 type authContextKey struct{}
 type authIdentity struct{ device, token string }
 type Server struct {
-	store    *Store
-	pair     *Pairing
-	tunnel   *tailcat.Server
-	signer   gossh.Signer
-	username string
-	mu       sync.Mutex
-	active   map[net.Conn]string
-	closed   bool
-	seats    chan struct{}
+	store      *Store
+	pair       *Pairing
+	cloud      cloudInvitations
+	tunnel     *tailcat.Server
+	direct     *directListener
+	address    string
+	relayError string
+	signer     gossh.Signer
+	username   string
+	mu         sync.Mutex
+	active     map[net.Conn]string
+	closed     bool
+	seats      chan struct{}
 }
 
 func Run(ctx context.Context, dir string) error {
@@ -75,21 +79,58 @@ func Run(ctx context.Context, dir string) error {
 		}
 		return nil
 	}
-	if err := s.tunnel.Start(); err != nil {
-		return fmt.Errorf("Tailcat 启动失败：%w", err)
-	}
-	defer s.tunnel.Close()
-	ci, err := tailcat.ParseAddr(s.tunnel.TailcatAddr())
+	// Direct access and the local control API must work even when DERP discovery fails.
+	s.direct, err = newDirectListener(dir, s.handle)
 	if err != nil {
 		return err
 	}
-	if err := ci.Expand(ctx); err != nil {
-		return err
+	defer s.direct.Close()
+	defer s.closeAll()
+	if err := s.direct.configure(s.direct.config, false); err != nil {
+		fmt.Fprintln(os.Stderr, "直连入口未启动；可通过 kagero-host direct 设置其他端口。")
 	}
-	store.Secret.Tailcat.Public = ci
-	if err := store.saveSecret(); err != nil {
-		return err
-	}
+	relayCtx, cancelRelay := context.WithCancel(ctx)
+	relayDone := make(chan struct{})
+	defer func() { cancelRelay(); <-relayDone }()
+	go func() {
+		defer close(relayDone)
+		ci := store.Secret.Tailcat.Public
+		if len(ci.Region) == 0 {
+			if ci.RegionID == 0 {
+				ci.RegionID = -1
+			}
+			if err := ci.Expand(relayCtx, tailcat.ExpandForServer); err != nil {
+				s.mu.Lock()
+				s.relayError = "Tailcat 中继发现失败；直连仍可使用"
+				s.mu.Unlock()
+				return
+			}
+		}
+		if relayCtx.Err() != nil {
+			return
+		}
+		s.tunnel.Region = ci.Region[0]
+		if err := s.tunnel.Start(); err != nil {
+			s.mu.Lock()
+			s.relayError = "Tailcat 启动失败；直连仍可使用"
+			s.mu.Unlock()
+			return
+		}
+		defer s.tunnel.Close()
+		address := string(s.tunnel.TailcatAddr())
+		if updated, err := tailcat.ParseAddr(tailcat.Addr(address)); err == nil {
+			store.Secret.Tailcat.Public = updated
+			if err := store.saveSecret(); err != nil {
+				s.mu.Lock()
+				s.relayError = "无法保存中继信息；本次连接仍可使用"
+				s.mu.Unlock()
+			}
+		}
+		s.mu.Lock()
+		s.address = address
+		s.mu.Unlock()
+		<-relayCtx.Done()
+	}()
 	socket := filepath.Join(dir, "control.sock")
 	if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {
 		return err
@@ -104,17 +145,49 @@ func Run(ctx context.Context, dir string) error {
 		return err
 	}
 	mux := http.NewServeMux()
+	s.cloudControl(mux)
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"version": Version, "id": store.State.ID, "name": store.State.Name, "devices": len(store.Devices()), "running": true})
+		s.mu.Lock()
+		relayReady, relayError := s.address != "", s.relayError
+		s.mu.Unlock()
+		writeJSON(w, map[string]any{"version": Version, "id": store.State.ID, "name": store.State.Name, "devices": len(store.Devices()), "running": true, "direct": s.direct.status(), "relayReady": relayReady, "relayError": relayError})
 	})
 	mux.HandleFunc("GET /devices", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, store.Devices()) })
 	mux.HandleFunc("POST /pair", func(w http.ResponseWriter, r *http.Request) {
-		i, err := s.pair.New(string(s.tunnel.TailcatAddr()), strings.TrimSpace(string(gossh.MarshalAuthorizedKey(signer.PublicKey()))))
+		s.mu.Lock()
+		address := s.address
+		s.mu.Unlock()
+		endpoints := s.direct.endpoints()
+		if address == "" && len(endpoints) == 0 {
+			http.Error(w, "暂无可用入口，请检查 status 或配置直连入口", 503)
+			return
+		}
+		i, err := s.pair.New(address, strings.TrimSpace(string(gossh.MarshalAuthorizedKey(signer.PublicKey()))))
+		i.Endpoints = endpoints
+		if address == "" {
+			i.Version = 2
+		}
 		if err != nil {
 			http.Error(w, "无法创建配对码", 500)
 			return
 		}
 		writeJSON(w, i)
+	})
+	mux.HandleFunc("GET /direct", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.direct.status()) })
+	mux.HandleFunc("POST /direct", func(w http.ResponseWriter, r *http.Request) {
+		var c DirectConfig
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&c) != nil {
+			http.Error(w, "直连配置无效", 400)
+			return
+		}
+		if err := s.direct.configure(c, true); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		writeJSON(w, s.direct.status())
 	})
 	mux.HandleFunc("POST /revoke", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -185,7 +258,7 @@ func (s *Server) handle(conn net.Conn) {
 			}
 		}}, RequestHandlers: map[string]ssh.RequestHandler{},
 		PasswordHandler: func(ctx ssh.Context, password string) bool {
-			if ctx.User() != "kagero-pair" || !s.pair.Accepts(password) {
+			if ctx.User() != "kagero-pair" || s.pairingFor(password) == nil {
 				return false
 			}
 			ctx.SetValue(authContextKey{}, authIdentity{token: password})
@@ -213,7 +286,7 @@ func (s *Server) handle(conn net.Conn) {
 			return a, false
 		}
 		if a.token != "" {
-			return a, s.pair.Accepts(a.token)
+			return a, s.pairingFor(a.token) != nil
 		}
 		if session.PublicKey() == nil {
 			return a, false
@@ -233,7 +306,7 @@ func (s *Server) handle(conn net.Conn) {
 		}
 		_ = conn.SetDeadline(time.Time{})
 		if session.RawCommand() == "kagero-host:info:v1" {
-			_ = json.NewEncoder(session).Encode(map[string]any{"id": s.store.State.ID, "name": s.store.State.Name, "version": Version, "deviceID": a.device})
+			_ = json.NewEncoder(session).Encode(map[string]any{"id": s.store.State.ID, "name": s.store.State.Name, "version": Version, "deviceID": a.device, "endpoints": s.endpoints(), "address": s.tailcatAddress()})
 			session.Exit(0)
 			return
 		}
@@ -292,12 +365,18 @@ func (s *Server) handlePair(session ssh.Session, token string) {
 		session.Exit(1)
 		return
 	}
-	reply, err := s.pair.Complete(token, req, s.username)
+	p := s.pairingFor(token)
+	if p == nil {
+		session.Exit(1)
+		return
+	}
+	reply, err := p.Complete(token, req, s.username)
 	if err != nil {
 		_ = json.NewEncoder(session).Encode(PairReply{Error: err.Error()})
 		session.Exit(0)
 		return
 	}
+	reply.Endpoints = s.endpoints()
 	_ = json.NewEncoder(session).Encode(reply)
 	session.Exit(0)
 }
@@ -321,3 +400,12 @@ func (s *Server) closeAll() {
 		c.Close()
 	}
 }
+
+func (s *Server) endpoints() []Endpoint {
+	if s.direct == nil {
+		return nil
+	}
+	return s.direct.endpoints()
+}
+
+func (s *Server) tailcatAddress() string { s.mu.Lock(); defer s.mu.Unlock(); return s.address }

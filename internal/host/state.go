@@ -18,7 +18,7 @@ import (
 )
 
 const SSHPort = 2222
-const Version = "0.1.6"
+const Version = "0.1.7"
 
 // Secret material is stored only in macOS Keychain. JSON contains public metadata.
 type Secrets struct {

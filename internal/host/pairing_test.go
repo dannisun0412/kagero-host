@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -45,7 +46,7 @@ func TestPairOnceRetryAndRevoke(t *testing.T) {
 	}
 	for range 3 {
 		again, err := p.Complete(i.Token, r, "fixture")
-		if err != nil || again != reply {
+		if err != nil || !reflect.DeepEqual(again, reply) {
 			t.Fatal("lost reply not idempotent", err)
 		}
 	}

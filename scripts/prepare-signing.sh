@@ -17,7 +17,7 @@ printf '%s' "$HOST_P12_BASE64" | base64 --decode > "$p12"
 printf '%s' "$HOST_NOTARY_KEY_BASE64" | base64 --decode > "$notary_key"
 keychain_password="$(openssl rand -hex 32)"
 security create-keychain -p "$keychain_password" "$keychain"
-security set-keychain-settings -lut 3600 "$keychain"
+security set-keychain-settings -lut 10800 "$keychain"
 security unlock-keychain -p "$keychain_password" "$keychain"
 # codesign also uses the user search list to resolve private keys, even with
 # --keychain. Preserve the runner's existing keychains while adding this one.

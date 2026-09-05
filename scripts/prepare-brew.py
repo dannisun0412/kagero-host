@@ -75,6 +75,7 @@ def formula(repository, version, assets):
         ]
     lines += [
         "", "  def install", '    bin.install "kagero-host"',
+        '    libexec.install "KageroCloud.app" if File.directory?("KageroCloud.app")',
         '    doc.install "LICENSE", "THIRD-PARTY-NOTICES.txt"', "  end",
         "", "  def caveats", "    <<~EOS",
         "      Run kagero-host setup to start the service at login and show a pairing QR code.",
