@@ -5,16 +5,30 @@ public enum CloudHostError: LocalizedError {
   public var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
 }
 
+public struct CloudEndpoint: Codable, Sendable, Equatable {
+  public let host: String
+  public let port: Int
+  public init(host: String, port: Int) { self.host = host; self.port = port }
+}
+
 public struct CloudHost: Codable, Sendable, Equatable, Identifiable {
   public let id: UUID
   public let name: String
   public let hostKey: String
   public let updatedAt: Int64
-  public init(id: UUID, name: String, hostKey: String, updatedAt: Int64) {
+  public var endpoints: [CloudEndpoint]?
+  public var publicUDP: [CloudEndpoint]?
+  public var address: String?
+  public init(id: UUID, name: String, hostKey: String, updatedAt: Int64, endpoints: [CloudEndpoint]? = nil, address: String? = nil, publicUDP: [CloudEndpoint]? = nil) {
     self.id = id; self.name = name; self.hostKey = hostKey; self.updatedAt = updatedAt
+    self.endpoints = endpoints; self.address = address; self.publicUDP = publicUDP
   }
   public func validate(now: Date = Date()) throws {
-    guard validName(name), validSSHKey(hostKey), updatedAt > 0,
+    guard (publicUDP?.count ?? 0) <= 8, (endpoints?.count ?? 0) <= 8,
+      ((endpoints ?? []) + (publicUDP ?? [])).allSatisfy({ !$0.host.isEmpty && $0.host.utf8.count <= 253 && (1...65535).contains($0.port)
+        && $0.host.utf8.allSatisfy { (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || [45,46,58].contains($0) } }),
+      (address.map { $0.isEmpty || ($0.hasPrefix("tc") && $0.utf8.count <= 4096 && !$0.contains(where: { $0.isWhitespace })) } ?? true),
+      validName(name), validSSHKey(hostKey), updatedAt > 0,
       updatedAt <= Int64(now.timeIntervalSince1970) + 300 else { throw CloudHostError.message("iCloud 电脑信息无效") }
   }
 }

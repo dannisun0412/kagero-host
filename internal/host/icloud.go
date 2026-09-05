@@ -66,7 +66,7 @@ func (s *Server) cloudInvitation(req CloudInviteRequest) (Invitation, error) {
 		return Invitation{}, err
 	}
 	i.ExpiresAt = req.ExpiresAt
-	i.Endpoints = endpoints
+	i.Endpoints = endpoints[:min(4, len(endpoints))]
 	if address == "" {
 		i.Version = 2
 	}
@@ -99,7 +99,7 @@ func (s *Server) cloudControl(mux *http.ServeMux) {
 	// These routes are available only on the 0600 Unix socket, never over SSH/TCP.
 	mux.HandleFunc("GET /icloud/host", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"id": s.store.State.ID, "name": s.store.State.Name,
-			"hostKey": strings.TrimSpace(string(gossh.MarshalAuthorizedKey(s.signer.PublicKey()))), "updatedAt": time.Now().Unix()})
+			"hostKey": strings.TrimSpace(string(gossh.MarshalAuthorizedKey(s.signer.PublicKey()))), "updatedAt": time.Now().Unix(), "endpoints": s.endpoints(), "address": s.tailcatAddress(), "publicUDP": s.publicUDP()})
 	})
 	mux.HandleFunc("POST /icloud/invitation", func(w http.ResponseWriter, r *http.Request) {
 		var req CloudInviteRequest

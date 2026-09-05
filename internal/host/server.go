@@ -150,7 +150,7 @@ func Run(ctx context.Context, dir string) error {
 		s.mu.Lock()
 		relayReady, relayError := s.address != "", s.relayError
 		s.mu.Unlock()
-		writeJSON(w, map[string]any{"version": Version, "id": store.State.ID, "name": store.State.Name, "devices": len(store.Devices()), "running": true, "direct": s.direct.status(), "relayReady": relayReady, "relayError": relayError})
+		writeJSON(w, map[string]any{"version": Version, "id": store.State.ID, "name": store.State.Name, "devices": len(store.Devices()), "running": true, "direct": s.direct.status(), "relayReady": relayReady, "relayError": relayError, "publicUDP": s.publicUDP()})
 	})
 	mux.HandleFunc("GET /devices", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, store.Devices()) })
 	mux.HandleFunc("POST /pair", func(w http.ResponseWriter, r *http.Request) {
@@ -163,7 +163,7 @@ func Run(ctx context.Context, dir string) error {
 			return
 		}
 		i, err := s.pair.New(address, strings.TrimSpace(string(gossh.MarshalAuthorizedKey(signer.PublicKey()))))
-		i.Endpoints = endpoints
+		i.Endpoints = endpoints[:min(4, len(endpoints))]
 		if address == "" {
 			i.Version = 2
 		}
@@ -306,7 +306,7 @@ func (s *Server) handle(conn net.Conn) {
 		}
 		_ = conn.SetDeadline(time.Time{})
 		if session.RawCommand() == "kagero-host:info:v1" {
-			_ = json.NewEncoder(session).Encode(map[string]any{"id": s.store.State.ID, "name": s.store.State.Name, "version": Version, "deviceID": a.device, "endpoints": s.endpoints(), "address": s.tailcatAddress()})
+			_ = json.NewEncoder(session).Encode(map[string]any{"id": s.store.State.ID, "name": s.store.State.Name, "version": Version, "deviceID": a.device, "endpoints": s.endpoints(), "address": s.tailcatAddress(), "publicUDP": s.publicUDP()})
 			session.Exit(0)
 			return
 		}
@@ -376,7 +376,8 @@ func (s *Server) handlePair(session ssh.Session, token string) {
 		session.Exit(0)
 		return
 	}
-	reply.Endpoints = s.endpoints()
+	hints := s.endpoints()
+	reply.Endpoints = hints[:min(4, len(hints))]
 	_ = json.NewEncoder(session).Encode(reply)
 	session.Exit(0)
 }
@@ -409,3 +410,20 @@ func (s *Server) endpoints() []Endpoint {
 }
 
 func (s *Server) tailcatAddress() string { s.mu.Lock(); defer s.mu.Unlock(); return s.address }
+
+// Public UDP mappings already discovered by magicsock/STUN/portmapper. They
+// belong to the encrypted tunnel, never the separate TCP SSH listener.
+func (s *Server) publicUDP() []Endpoint {
+	s.mu.Lock()
+	ready := s.address != "" && !s.closed
+	tunnel := s.tunnel
+	s.mu.Unlock()
+	if !ready || tunnel == nil {
+		return nil
+	}
+	status := tunnel.Status()
+	if status == nil || status.Self == nil {
+		return nil
+	}
+	return publicUDPEndpoints(status.Self.Addrs)
+}

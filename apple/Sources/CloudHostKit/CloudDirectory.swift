@@ -63,6 +63,14 @@ public actor CloudDirectory {
     }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
   }
 
+  /// Bounded lookup of a known computer; does not scan the entire account or create subscriptions.
+  public func host(_ id: UUID) async throws -> CloudHost? {
+    guard let record = try await fetch(CKRecord.ID(recordName: hostName(id), zoneID: zone), timeout: 3) else { return nil }
+    let host: CloudHost = try decode(record); try host.validate()
+    guard host.id == id else { throw CloudHostError.message("iCloud 电脑编号不匹配") }
+    return host
+  }
+
   public func publish(_ host: CloudHost) async throws {
     try host.validate()
     let id = CKRecord.ID(recordName: hostName(host.id), zoneID: zone)
@@ -146,11 +154,11 @@ public actor CloudDirectory {
       }
     }
   }
-  private func fetch(_ id: CKRecord.ID) async throws -> CKRecord? {
+  private func fetch(_ id: CKRecord.ID, timeout: TimeInterval = 22) async throws -> CKRecord? {
     let value = LockedRecords()
     let op = CKFetchRecordsOperation(recordIDs: [id])
     op.perRecordResultBlock = { _, result in value.add(result) }
-    do { try await perform(op) { finish in op.fetchRecordsResultBlock = finish } }
+    do { try await perform(op, timeout: timeout) { finish in op.fetchRecordsResultBlock = finish } }
     catch { if let e = value.error as? CKError, e.code == .unknownItem { return nil }; throw error }
     if let error = value.error { if (error as? CKError)?.code == .unknownItem { return nil }; throw error }
     return value.records.first
@@ -181,9 +189,9 @@ public actor CloudDirectory {
     if let error = values.error { throw error }
     return values.records
   }
-  private func perform(_ op: CKDatabaseOperation, setup: (@escaping (Result<Void, Error>) -> Void) -> Void) async throws {
-    op.configuration.timeoutIntervalForRequest = 10
-    op.configuration.timeoutIntervalForResource = 20
+  private func perform(_ op: CKDatabaseOperation, timeout: TimeInterval = 22, setup: (@escaping (Result<Void, Error>) -> Void) -> Void) async throws {
+    op.configuration.timeoutIntervalForRequest = min(10, timeout)
+    op.configuration.timeoutIntervalForResource = min(20, timeout)
     op.configuration.qualityOfService = .utility
     try await withTaskCancellationHandler {
       try Task.checkCancellation()
@@ -191,7 +199,7 @@ public actor CloudDirectory {
         let result = Completion(continuation)
         let timer = DispatchWorkItem { [weak op] in op?.cancel(); result.finish(.failure(CloudHostError.message("iCloud 同步超时，请检查网络后重试"))) }
         setup { value in timer.cancel(); result.finish(value) }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 22, execute: timer)
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
         database.add(op)
       }
       try Task.checkCancellation()

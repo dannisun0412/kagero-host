@@ -28,14 +28,37 @@ def check_archive(path, architecture):
         raise ValueError(f"Archive exceeds 64 MB: {path.name}")
     with tarfile.open(path, "r:gz") as archive:
         expected = {"kagero-host", "LICENSE", "THIRD-PARTY-NOTICES.txt"}
+        cloud_required = {
+            "KageroCloud.app/Contents/Info.plist",
+            "KageroCloud.app/Contents/MacOS/KageroCloud",
+            "KageroCloud.app/Contents/embedded.provisionprofile",
+            "KageroCloud.app/Contents/_CodeSignature/CodeResources",
+        }
         found = set()
+        files = set()
+        total_size = 0
+        has_cloud = False
         for member in archive:
-            if member.name not in expected or member.name in found or not member.isfile():
-                raise ValueError(f"Unexpected archive entry: {member.name}")
+            name = member.name
+            parts = name.split("/")
+            cloud = parts[0] == "KageroCloud.app"
+            if (name in found or any(part in ("", ".", "..") for part in parts)
+                    or "\\" in name or (name not in expected and not cloud)
+                    or not (member.isfile() or (cloud and member.isdir()))):
+                raise ValueError(f"Unexpected archive entry: {name}")
+            found.add(name)
+            has_cloud = has_cloud or cloud
+            total_size += member.size
+            if len(found) > 256 or total_size > 128 * 1024 * 1024:
+                raise ValueError("Archive has too many entries or exceeds 128 MB unpacked.")
+            if member.isdir():
+                if member.size != 0:
+                    raise ValueError(f"Invalid directory size: {name}")
+                continue
             if member.size <= 0 or member.size > 64 * 1024 * 1024:
-                raise ValueError(f"Invalid archive entry size: {member.name}")
-            found.add(member.name)
-            if member.name == "kagero-host":
+                raise ValueError(f"Invalid archive entry size: {name}")
+            files.add(name)
+            if name in ("kagero-host", "KageroCloud.app/Contents/MacOS/KageroCloud"):
                 if member.mode & 0o111 == 0:
                     raise ValueError("The archived executable is missing its execute permission.")
                 handle = archive.extractfile(member)
@@ -45,9 +68,16 @@ def check_archive(path, architecture):
                     header = handle.read(8)
                 expected_header = (0xFEEDFACF, ARCHITECTURES[architecture][0])
                 if len(header) != 8 or struct.unpack("<II", header) != expected_header:
-                    raise ValueError(f"The binary in {path.name} is not a {architecture} Mach-O executable.")
-        if found != expected:
+                    raise ValueError(f"{name} is not a {architecture} Mach-O executable.")
+        if not expected.issubset(files):
             raise ValueError(f"Missing executable or license in {path.name}")
+        if has_cloud and not cloud_required.issubset(files):
+            raise ValueError("The iCloud companion is missing required bundle or signing files.")
+        # Reject file-as-parent layouts regardless of archive entry order.
+        for name in found:
+            parts = name.split("/")
+            if any("/".join(parts[:index]) in files for index in range(1, len(parts))):
+                raise ValueError(f"Archive file used as directory: {name}")
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 

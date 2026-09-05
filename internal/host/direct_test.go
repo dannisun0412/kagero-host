@@ -104,3 +104,28 @@ func TestDirectConfigAtomicFailureAndDisablePreservesSessions(t *testing.T) {
 		t.Fatal("config did not survive restart", err)
 	}
 }
+
+func TestCollectMultipleInterfaceAddresses(t *testing.T) {
+	endpoints := collectEndpoints([]Endpoint{{"home.example.com", 2223}}, []string{"192.168.1.2", "192.168.1.2", "10.0.0.2"}, []string{"2001:db8::1", "2001:db8::2"}, 2223)
+	if len(endpoints) != 5 {
+		t.Fatalf("missing interface or duplicate: %+v", endpoints)
+	}
+	found := map[string]bool{}
+	for _, e := range endpoints {
+		found[e.Host] = true
+	}
+	if !found["10.0.0.2"] || !found["2001:db8::2"] {
+		t.Fatal("dropped secondary interface")
+	}
+}
+
+func TestPublicUDPEndpointsPreserveMappingAndRejectPrivateHints(t *testing.T) {
+	got := publicUDPEndpoints([]string{"192.168.1.104:2223", "100.64.1.2:40000", "127.0.0.1:20000", "[fd00::2]:12345", "[fe80::2]:12345", "home.example.com:2223", "203.0.113.9:38238", "203.0.113.9:38238", "[2001:db8::123]:42600"})
+	if len(got) != 2 || got[0] != (Endpoint{"203.0.113.9", 38238}) || got[1] != (Endpoint{"2001:db8::123", 42600}) {
+		t.Fatalf("public UDP mapping lost or confused with TCP hints: %+v", got)
+	}
+	s := &Server{}
+	if s.publicUDP() != nil {
+		t.Fatal("unstarted tunnel advertised public mappings")
+	}
+}

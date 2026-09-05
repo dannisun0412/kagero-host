@@ -178,7 +178,7 @@ func (d *directListener) endpoints() []Endpoint {
 	}
 	c := d.config
 	d.mu.Unlock()
-	// Prefer configured stable DNS names, then one LAN v4 and one global v6.
+	// Advertise bounded physical-interface hints; the client ranks them for its own network.
 	result := append([]Endpoint{}, c.Public...)
 	interfaces, err := net.Interfaces()
 	if err != nil {
@@ -205,18 +205,60 @@ func (d *directListener) endpoints() []Endpoint {
 			}
 			if ip.Is4() {
 				v4 = append(v4, ip.String())
-			} else if !ip.IsPrivate() {
+			} else {
 				v6 = append(v6, ip.String())
 			}
 		}
 	}
 	sort.Strings(v4)
 	sort.Strings(v6)
-	if len(v4) > 0 {
-		result = append(result, Endpoint{v4[0], c.Port})
+	return collectEndpoints(result, v4, v6, c.Port)
+}
+
+// Interleave both families so a Mac with many IPv6 privacy addresses still advertises IPv4.
+func collectEndpoints(result []Endpoint, v4, v6 []string, port int) []Endpoint {
+	seen := map[Endpoint]bool{}
+	for _, e := range result {
+		seen[e] = true
 	}
-	if len(v6) > 0 {
-		result = append(result, Endpoint{v6[0], c.Port})
+	for i := 0; (i < len(v4) || i < len(v6)) && len(result) < 8; i++ {
+		for _, family := range [][]string{v4, v6} {
+			if i >= len(family) || len(result) >= 8 {
+				continue
+			}
+			e := Endpoint{family[i], port}
+			if e.valid() && !seen[e] {
+				result = append(result, e)
+				seen[e] = true
+			}
+		}
+	}
+	return result
+}
+
+// Keep only numeric globally routable UDP endpoints; a discovered mapping's
+// port must be preserved, not replaced with the TCP listener's 2223.
+func publicUDPEndpoints(addresses []string) []Endpoint {
+	result := []Endpoint{}
+	seen := map[Endpoint]bool{}
+	cgnat := netip.MustParsePrefix("100.64.0.0/10")
+	for _, raw := range addresses {
+		ap, err := netip.ParseAddrPort(raw)
+		if err != nil {
+			continue
+		}
+		ip := ap.Addr()
+		if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.Is4In6() || cgnat.Contains(ip) {
+			continue
+		}
+		e := Endpoint{ip.String(), int(ap.Port())}
+		if e.valid() && !seen[e] {
+			result = append(result, e)
+			seen[e] = true
+		}
+		if len(result) == 8 {
+			break
+		}
 	}
 	return result
 }

@@ -48,7 +48,7 @@ private struct CloudSettings: View {
 @MainActor final class CloudAppDelegate: NSObject, NSApplicationDelegate {
   let model = CloudCoordinator()
   private let network = NWPathMonitor()
-  private var lastPath: NWPath.Status?
+  private var networkRefresh: Task<Void, Never>?
   private var accountObserver: NSObjectProtocol?
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.registerForRemoteNotifications(matching: [])
@@ -58,7 +58,12 @@ private struct CloudSettings: View {
     network.pathUpdateHandler = { [weak self] path in
       Task { @MainActor in
         guard let self else { return }
-        if self.lastPath != path.status { self.lastPath = path.status; if path.status == .satisfied { self.model.refresh() } }
+        self.networkRefresh?.cancel()
+        guard path.status == .satisfied else { return }
+        self.networkRefresh = Task { [weak self] in
+          do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+          self?.model.refresh()
+        }
       }
     }
     network.start(queue: DispatchQueue(label: "app.kagero.cloud.network"))
@@ -70,7 +75,7 @@ private struct CloudSettings: View {
     model.refresh()
   }
   func applicationWillTerminate(_ notification: Notification) {
-    network.cancel(); model.cancel()
+    network.cancel(); networkRefresh?.cancel(); model.cancel()
     if let accountObserver { NotificationCenter.default.removeObserver(accountObserver) }
   }
 }
@@ -145,6 +150,7 @@ private struct CloudSettings: View {
         // discovery lease only on first observation or when older than one hour.
         let existing = try await directory.hosts().first { $0.id == host.id }
         if existing == nil || existing?.name != host.name || existing?.hostKey != host.hostKey
+          || existing?.endpoints != host.endpoints || existing?.address != host.address || existing?.publicUDP != host.publicUDP
           || (existing?.updatedAt ?? 0) < host.updatedAt - 3600 { try await directory.publish(host) }
         for request in try await directory.pending(for: host) {
           try Task.checkCancellation(); guard current == generation, enabled else { return }
