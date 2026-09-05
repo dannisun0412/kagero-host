@@ -58,7 +58,9 @@ formula = f'''class KageroHost < Formula
   version "{version}"
   license "MIT"
   depends_on :macos
-  depends_on macos: :ventura
+  on_macos do
+    depends_on macos: :ventura
+  end
   def install
     bin.install "kagero-host"
     doc.install "LICENSE", "THIRD-PARTY-NOTICES.txt"

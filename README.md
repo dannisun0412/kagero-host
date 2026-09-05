@@ -4,7 +4,7 @@ Kagero 的 macOS 电脑端伴侣：安装、生成二维码，在 App「添加�
 
 ## Homebrew 安装
 
-公开发布地址为 [dannisun0412/kagero-host](https://github.com/dannisun0412/kagero-host)，安装源为 [dannisun0412/homebrew-tap](https://github.com/dannisun0412/homebrew-tap)。发布 `v0.1.0` 并同步 tap 后可运行：
+已发布 [0.1.0 测试版](https://github.com/dannisun0412/kagero-host/releases/tag/v0.1.0)，安装源为 [dannisun0412/homebrew-tap](https://github.com/dannisun0412/homebrew-tap)。在终端运行：
 
 ```sh
 brew install dannisun0412/tap/kagero-host

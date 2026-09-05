@@ -60,7 +60,9 @@ def formula(repository, version, assets):
         '  license "MIT"',
         "",
         "  depends_on :macos",
-        "  depends_on macos: :ventura",
+        "  on_macos do",
+        "    depends_on macos: :ventura",
+        "  end",
     ]
     if len(assets) == 1:
         lines.append(f"  depends_on arch: :{ARCHITECTURES[assets[0][0]][1]}")
