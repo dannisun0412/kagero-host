@@ -1,0 +1,11 @@
+{
+  "name": "kagero-host",
+  "version": "0.1.0",
+  "description": "Kagero desktop companion with QR pairing, powered by Tailcat",
+  "license": "MIT",
+  "os": ["darwin"],
+  "cpu": ["arm64", "x64"],
+  "engines": { "node": ">=18" },
+  "bin": { "kagero-host": "cli.cjs" },
+  "files": ["cli.cjs", "bin/", "README.md", "LICENSE", "THIRD-PARTY-NOTICES.txt"]
+}
